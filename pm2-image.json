@@ -1,0 +1,19 @@
+//pm2 startOrGracefulReload pm2.json
+{
+  "apps": [
+    {
+      "name": "mcp-image",
+      "script": "npm",
+      "args": "run start:image",
+      "max_memory_restart": "512M",
+      "autorestart": true,
+      "watch": true,
+      "exec_mode": "cluster",
+      "instances": 1,
+      "node_args": "",
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  ]
+}

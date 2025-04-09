@@ -1,0 +1,28 @@
+{
+  "name": "owlscript-server",
+  "version": "1.0.0",
+  "description": "OwlScript Server",
+  "main": "build/index.js",
+  "type": "module",
+  "scripts": {
+    "dev:image": "tsc -w & npx tsx build/servers/image.js",
+    "start:image": "npx tsx build/servers/image.js",
+    "pm2:image": "pm2 startOrGracefulReload pm2-image.json"
+  },
+  "files": [
+    "build"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "axios": "^1.8.4",
+    "dotenv": "^16.4.7",
+    "fastmcp": "^1.20.5",
+    "sharp": "^0.34.1",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}
