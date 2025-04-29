@@ -1,27 +1,15 @@
-import { exec, execSync } from "child_process";
-import {
-  access,
-  copyFile,
-  existsSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { resolve } from "path";
+import { execSync, exec } from "child_process";
 import pngquant from "pngquant-bin";
+import os from "os";
+import { writeFileSync, unlinkSync, access, copyFile, statSync } from "fs";
+import { resolve } from "path";
 import sharp from "sharp";
 
-/**
- * 下载图片
- * @param imageUrl 图片的URL
- * @returns 图片的Buffer
- */
-export async function downloadImage(imageUrl: string) {
+async function downloadImage(imageUrl) {
   const response = await fetch(imageUrl);
   const blob = await response.blob();
   const output = resolve(
-    tmpdir(),
+    os.tmpdir(),
     `${imageUrl.split("?")[0].split("/").pop()}.${blob.type.split("/")[1]}`
   );
   writeFileSync(output, Buffer.from(await blob.arrayBuffer()));
@@ -29,72 +17,27 @@ export async function downloadImage(imageUrl: string) {
   return output;
 }
 
-/**
- * 删除文件
- * @param filePath 文件的路径
- */
-export function removeFile(filePath: string) {
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
-  }
-}
+// downloadImage(
+//   "https://img2.baidu.com/it/u=647265987,1253183144&fm=253&fmt=auto&app=138&f=JPEG?w=800&h=500"
+// ).then((res) => {
+//   console.log(">>>", res);
+// });
 
-/**
- * 获取图片的扩展名
- * @param imageUrl 图片的URL
- * @returns 图片的扩展名
- */
-export async function getImageExtension(imageUrl: string): Promise<string> {
-  const response = await fetch(imageUrl);
-  const blob = await response.blob();
-  return blob.type.split("/")[1];
-}
+// unlinkSync(
+//   "/var/folders/gc/bnd3dwq906x57tffhvb3bkgh0000gn/T/u=647265987,1253183144&fm=253&fmt=auto&app=138&f=JPEG.jpeg"
+// );
 
-/**
- * 获取图片的格式
- * @param imageUrl 图片的URL
- * @returns 图片的格式
- */
-export async function getImageFormat(imageUrl: string): Promise<string> {
-  const response = await fetch(imageUrl);
-  const blob = await response.blob();
-  return blob.type;
-}
-
-/**
- * 获取图片的大小
- * @param imageUrl 图片的URL
- * @returns 图片的大小
- */
-export async function getImageSize(
-  imageUrl: string
-): Promise<{ width: number; height: number }> {
-  const response = await fetch(imageUrl);
-  const blob = await response.blob();
-  return { width: blob.size, height: blob.size };
-}
-
-export async function compressPng(params: {
-  input: string;
-  output: string;
-  quality?: string;
-  speed?: number;
-  strip?: boolean;
-  maxBuffer?: number;
-  timeout?: number;
-}) {
+async function pngquantCompress(params) {
   try {
     // 校验输入文件是否存在
-    if (!existsSync(params.input)) {
-      throw new Error("输入文件不存在");
-    }
+    // await access(params.input);
 
     const args = [
       "--quality",
       params.quality || "65-90",
       "--speed",
-      params.speed || "1", // 调整速度平衡 (1=慢但质量好，3=平衡值)
-      params.strip ? "--strip" : "", // 移除元数据
+      "1", // 调整速度平衡 (1=慢但质量好，3=平衡值)
+      "--strip", // 移除元数据
       "--output",
       params.output, // 明确输出路径
       "--", // 参数终止符
@@ -103,29 +46,28 @@ export async function compressPng(params: {
 
     // 使用异步执行 + 内存限制
     await new Promise((resolve, reject) => {
-      // const child =
-      exec(
+      const child = exec(
         `"${pngquant}" ${args.join(" ")}`,
         {
-          maxBuffer: params.maxBuffer || 1024 * 1024 * 100, // 100MB 缓冲区
-          timeout: params.timeout || 60000, // 60秒超时
+          maxBuffer: 1024 * 1024 * 100, // 100MB 缓冲区
+          timeout: 60000, // 60秒超时
         },
         (error) => {
           if (error?.code === 99) {
             // 特殊错误码处理 (压缩后文件更大)
             // console.warn("压缩后体积未减小，保留原文件");
-            copyFile(params.input, params.output, () => resolve(true));
+            copyFile(params.input, params.output, () => resolve());
           } else if (error) {
             reject(error);
           } else {
-            resolve(true);
+            resolve();
           }
         }
       );
 
       // 实时日志输出
-      // child.stdout?.on("data", console.log);
-      // child.stderr?.on("data", console.error);
+      child.stdout?.on("data", console.log);
+      child.stderr?.on("data", console.error);
     });
 
     // 校验输出文件
@@ -141,10 +83,7 @@ export async function compressPng(params: {
 }
 
 // Sharp 回退方案
-async function fallbackSharpCompress(params: {
-  input: string;
-  output: string;
-}) {
+async function fallbackSharpCompress(params) {
   return sharp(params.input)
     .png({
       quality: 80,
@@ -154,23 +93,15 @@ async function fallbackSharpCompress(params: {
     .toFile(params.output);
 }
 
-export async function compressWebp(params: {
-  input: string;
-  output: string;
-  quality?: number;
-}) {
+function compressWebp(params) {
   return sharp(params.input)
     .webp({
-      quality: params.quality || 80,
+      quality: params.quality || 60,
     })
     .toFile(params.output);
 }
 
-async function compressJpg(params: {
-  input: string;
-  output: string;
-  quality?: number;
-}) {
+async function compressJpg(params) {
   // 获取原始图片元数据
   const metadata = await sharp(params.input).metadata();
 
@@ -200,6 +131,7 @@ async function compressJpg(params: {
         // 选择性保留必要元数据
         IFD0: {
           powered: "@liangqy @2025",
+          title: "new title",
           //   Copyright: metadata.exif?.IFD0?.Copyright, // 保留版权信息
         },
       },
@@ -207,3 +139,47 @@ async function compressJpg(params: {
     .jpeg(compressionParams)
     .toFile(params.output);
 }
+
+// compressJpg({
+//   input: "/Users/liangshan/Downloads/图片/5.jpg",
+//   output: "/Users/liangshan/Downloads/图片/5-cc.jpg",
+//   //   quality: 80,
+// });
+
+// pngquantCompress({
+//   input: "/Users/liangshan/Downloads/图片/3.webp",
+//   output: "/Users/liangshan/Downloads/图片/133333.webp",
+//   quality: "65-90",
+// });
+
+// compressWebp({
+//   input: "/Users/liangshan/Downloads/图片/3.webp",
+//   output: "/Users/liangshan/Downloads/图片/233333.webp",
+// });
+
+async function getMetadata(params) {
+  const metadata = await sharp(params.input).metadata();
+
+  // const decoder = new TextDecoder("utf-8");
+  // const s = decoder.decode(metadata.exif?.slice(4) || Buffer.from(""));
+  console.log("11>>>", metadata.exif?.toLocaleString());
+}
+
+// getMetadata({
+//   input: "/Users/liangshan/Downloads/图片/1.png",
+// });
+// getMetadata({
+//   input: "/Users/liangshan/Downloads/图片/2.png",
+// });
+// getMetadata({
+//   input: "/Users/liangshan/Downloads/图片/3.webp",
+// });
+// getMetadata({
+//   input: "/Users/liangshan/Downloads/图片/4.jpeg",
+// });
+// getMetadata({
+//   input: "/Users/liangshan/Downloads/图片/5.jpg",
+// });
+getMetadata({
+  input: "/Users/liangshan/Downloads/图片/5-cc.jpg",
+});

@@ -37,6 +37,9 @@ server.addTool({
     }
     const image = await downloadImage(args.imageUrl);
 
+    if (image.endsWith(".png")) {
+    }
+
     const compressedImage = await sharp(image)
       .png({
         quality: args.quality || 80,
