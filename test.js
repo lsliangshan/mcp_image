@@ -1,9 +1,17 @@
 import { execSync, exec } from "child_process";
 import pngquant from "pngquant-bin";
 import os from "os";
-import { writeFileSync, unlinkSync, access, copyFile, statSync } from "fs";
+import {
+  writeFileSync,
+  unlinkSync,
+  access,
+  copyFile,
+  statSync,
+  readFileSync,
+} from "fs";
 import { resolve } from "path";
 import sharp from "sharp";
+import toIco from "to-ico";
 
 async function downloadImage(imageUrl) {
   const response = await fetch(imageUrl);
@@ -152,6 +160,12 @@ async function compressJpg(params) {
 //   quality: "65-90",
 // });
 
+// pngquantCompress({
+//   input: "/Users/liangshan/Downloads/图片/2.png",
+//   output: "/Users/liangshan/Downloads/图片/2221.png",
+//   quality: "60",
+// });
+
 // compressWebp({
 //   input: "/Users/liangshan/Downloads/图片/3.webp",
 //   output: "/Users/liangshan/Downloads/图片/233333.webp",
@@ -162,7 +176,7 @@ async function getMetadata(params) {
 
   // const decoder = new TextDecoder("utf-8");
   // const s = decoder.decode(metadata.exif?.slice(4) || Buffer.from(""));
-  console.log("11>>>", metadata.exif?.toLocaleString());
+  console.log("11>>>", metadata);
 }
 
 // getMetadata({
@@ -180,6 +194,104 @@ async function getMetadata(params) {
 // getMetadata({
 //   input: "/Users/liangshan/Downloads/图片/5.jpg",
 // });
-getMetadata({
-  input: "/Users/liangshan/Downloads/图片/5-cc.jpg",
+// getMetadata({
+//   input: "/Users/liangshan/Downloads/图片/111.jpeg",
+// });
+
+async function addRoundedCorners(params) {
+  try {
+    // 读取原始JPEG图像
+    const image = sharp(params.input);
+    const { width, height } = await image.metadata();
+
+    const svgMask = `
+      <svg width="${width}" height="${height}">
+        <rect x="0" y="0" 
+              width="${width}" 
+              height="${height}"
+              rx="${params.radius}" 
+              ry="${params.radius}"
+              fill="white"/>
+      </svg>
+    `;
+
+    // 创建单通道Alpha遮罩
+    const alphaMask = await sharp(Buffer.from(svgMask))
+      .resize(width, height)
+      .greyscale() // 转换为灰度
+      .toColourspace("b-w") // 强制单通道
+      .raw()
+      .toBuffer();
+
+    // 处理图像并应用透明圆角
+    await image
+      .ensureAlpha() // 强制添加透明通道
+      .composite([{ input: Buffer.from(svgMask), blend: "dest-in" }])
+      .png({
+        quality: 100, // PNG质量（1-100）
+        compressionLevel: 9, // 最高压缩率
+        adaptiveFiltering: true, // 启用自适应过滤
+      })
+      .toFile(params.output);
+
+    console.log("转换成功：透明圆角PNG已生成");
+  } catch (err) {
+    console.error("处理失败：", err);
+  }
+}
+
+// addRoundedCorners({
+//   input: "/Users/liangshan/Downloads/图片/6.jpg",
+//   output: "/Users/liangshan/Downloads/图片/611.png",
+//   radius: 40,
+// });
+
+async function toIcoImage(params) {
+  try {
+    // 生成不同尺寸的PNG Buffer数组
+    const buffers = await Promise.all(
+      [16, 32, 48, 64, 128, 256].map((size) =>
+        sharp(params.input)
+          .resize(size) // 调整尺寸
+          .toFormat("png") // 转换为PNG格式
+          .toBuffer()
+      )
+    );
+
+    // 合并为ICO文件
+    const icoData = await toIco(buffers);
+
+    // 写入输出文件
+    writeFileSync(params.output, icoData);
+    console.log("ICO文件生成成功！");
+  } catch (error) {
+    console.error("转换失败:", error);
+  }
+}
+
+// heic, heif, avif, jpeg, jpg, jpe, tile, dz, png, raw, tiff, tif, webp, gif, jp2, jpx, j2k, j2c, jxl
+async function formatImage(params) {
+  try {
+    if (params.format === "ico") {
+      await toIcoImage(params);
+      return;
+    }
+
+    await sharp(params.input)
+      .toFormat(params.format || "jpeg", {
+        quality: params.quality || 100,
+        compressionLevel: 9,
+        lossless: true,
+      })
+      .toFile(params.output);
+  } catch (error) {
+    console.error("处理失败：", error);
+  }
+}
+
+formatImage({
+  input: "/Users/liangshan/Downloads/图片/1.jpeg",
+  output: "/Users/liangshan/Downloads/图片/1-cc.ico",
+  format: "ico",
+  quality: 94,
 });

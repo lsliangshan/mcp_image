@@ -20,10 +20,15 @@ import sharp from "sharp";
 export async function downloadImage(imageUrl: string) {
   const response = await fetch(imageUrl);
   const blob = await response.blob();
+
   const output = resolve(
     tmpdir(),
     `${imageUrl.split("?")[0].split("/").pop()}.${blob.type.split("/")[1]}`
   );
+
+  if (existsSync(output)) {
+    unlinkSync(output);
+  }
   writeFileSync(output, Buffer.from(await blob.arrayBuffer()));
 
   return output;
@@ -77,23 +82,22 @@ export async function getImageSize(
 export async function compressPng(params: {
   input: string;
   output: string;
-  quality?: string;
+  quality?: number;
   speed?: number;
   strip?: boolean;
   maxBuffer?: number;
   timeout?: number;
 }) {
+  // 校验输入文件是否存在
+  if (!existsSync(params.input)) {
+    throw new Error("输入文件不存在");
+  }
   try {
-    // 校验输入文件是否存在
-    if (!existsSync(params.input)) {
-      throw new Error("输入文件不存在");
-    }
-
     const args = [
       "--quality",
-      params.quality || "65-90",
+      params.quality || 65,
       "--speed",
-      params.speed || "1", // 调整速度平衡 (1=慢但质量好，3=平衡值)
+      params.speed || 1, // 调整速度平衡 (1=慢但质量好，3=平衡值)
       params.strip ? "--strip" : "", // 移除元数据
       "--output",
       params.output, // 明确输出路径
@@ -166,7 +170,7 @@ export async function compressWebp(params: {
     .toFile(params.output);
 }
 
-async function compressJpg(params: {
+export async function compressJpg(params: {
   input: string;
   output: string;
   quality?: number;
@@ -199,11 +203,51 @@ async function compressJpg(params: {
       exif: {
         // 选择性保留必要元数据
         IFD0: {
-          powered: "@liangqy @2025",
           //   Copyright: metadata.exif?.IFD0?.Copyright, // 保留版权信息
         },
       },
     })
     .jpeg(compressionParams)
     .toFile(params.output);
+}
+
+/**
+ * 裁剪图片并添加圆角
+ * @param params 裁剪参数
+ * @returns 裁剪后的图片路径
+ */
+export async function clipImageWithRoundedCorners(params: {
+  input: string;
+  output: string;
+  radius?: number;
+}) {
+  try {
+    // 读取原始JPEG图像
+    const image = sharp(params.input);
+    const { width, height } = await image.metadata();
+
+    const svgMask = `
+      <svg width="${width}" height="${height}">
+        <rect x="0" y="0" 
+              width="${width}" 
+              height="${height}"
+              rx="${params.radius || 20}" 
+              ry="${params.radius || 20}"
+              fill="white"/>
+      </svg>
+    `;
+
+    // 处理图像并应用透明圆角
+    await image
+      .ensureAlpha() // 强制添加透明通道
+      .composite([{ input: Buffer.from(svgMask), blend: "dest-in" }])
+      .png({
+        quality: 100, // PNG质量（1-100）
+        compressionLevel: 9, // 最高压缩率
+        adaptiveFiltering: true, // 启用自适应过滤
+      })
+      .toFile(params.output);
+  } catch (error) {
+    throw error;
+  }
 }

@@ -1,9 +1,19 @@
-import { FastMCP, imageContent } from "fastmcp";
+import { FastMCP, ImageContent, imageContent } from "fastmcp";
 import { z } from "zod";
 import { servers } from "../config/index.js";
-import { downloadImage } from "../utils/image.js";
-import sharp from "sharp";
-import fs from "fs";
+import {
+  clipImageWithRoundedCorners,
+  compressJpg,
+  compressPng,
+  compressWebp,
+  downloadImage,
+} from "../utils/image.js";
+import { existsSync, statSync } from "fs";
+import { resolve } from "path";
+import { tmpdir } from "os";
+import { getRandomId } from "../utils/random.js";
+import { upload } from "../services/qiniu.js";
+import { formatBytes } from "../utils/index.js";
 
 const ServerName = "image";
 
@@ -37,27 +47,125 @@ server.addTool({
     }
     const image = await downloadImage(args.imageUrl);
 
-    if (image.endsWith(".png")) {
-    }
-
-    const compressedImage = await sharp(image)
-      .png({
-        quality: args.quality || 80,
-      })
-      .toBuffer();
-
-    const f = fs.writeFileSync(
-      `${args.imageUrl.split("?")[0].split("/").pop()}.png`,
-      compressedImage
+    const output = resolve(
+      tmpdir(),
+      `${image.split(".")[0]}-${getRandomId()}.${image.split(".").pop()}`
     );
 
-    console.log(f);
+    if (image.endsWith(".png")) {
+      await compressPng({
+        input: image,
+        output,
+        quality: args.quality || 65,
+      });
+    } else if (image.endsWith("webp")) {
+      await compressWebp({
+        input: image,
+        output,
+        quality: args.quality || 80,
+      });
+    } else {
+      await compressJpg({
+        input: image,
+        output,
+        quality: args.quality || 60,
+      });
+    }
 
+    if (existsSync(output)) {
+      const uploadResponse = await upload({
+        url: output,
+        deleteAfterDays: 30,
+      });
+
+      if (uploadResponse.code === 200 && uploadResponse.data) {
+        const originSize = statSync(image).size;
+        const newSize = statSync(output).size;
+        const saveSize = originSize - newSize;
+        const saveRate = (saveSize / originSize) * 100;
+
+        return `图片压缩成功，请查看：${
+          uploadResponse.data.url
+        }, 原图大小：${formatBytes(originSize)}，压缩后大小：${formatBytes(
+          newSize
+        )}，压缩比例：${saveRate.toFixed(2)}%`;
+      } else {
+        return {
+          content: [
+            {
+              type: "text",
+              text: uploadResponse.message || `图片压缩失败，请稍后再试。`,
+            },
+          ],
+        };
+      }
+    }
     return {
       content: [
         {
           type: "text",
-          text: `图片压缩成功，文件：${f}`,
+          text: `图片压缩失败`,
+        },
+      ],
+    };
+  },
+});
+
+server.addTool({
+  name: "roundedImage",
+  description: "图片切圆角",
+  parameters: z.object({
+    imageUrl: z.string().url().describe("图片的 URL"),
+    radius: z.number().min(0).optional().describe("圆角的大小，单位：px"),
+  }),
+  execute: async (args) => {
+    if (!args.imageUrl) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `图片的 URL 不能为空`,
+          },
+        ],
+      };
+    }
+    const image = await downloadImage(args.imageUrl);
+
+    const output = resolve(
+      tmpdir(),
+      `${image.split(".")[0]}-${getRandomId()}.png`
+    );
+
+    await clipImageWithRoundedCorners({
+      input: image,
+      output,
+      radius: args.radius || 20,
+    });
+
+    if (existsSync(output)) {
+      const uploadResponse = await upload({
+        url: output,
+        deleteAfterDays: 30,
+      });
+
+      if (uploadResponse.code === 200 && uploadResponse.data) {
+        return `图片切圆角成功，请查看：${uploadResponse.data.url}`;
+      } else {
+        return {
+          content: [
+            {
+              type: "text",
+              text: uploadResponse.message || `图片切圆角失败，请稍后再试。`,
+            },
+          ],
+        };
+      }
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: `图片切圆角失败`,
         },
       ],
     };
