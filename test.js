@@ -8,6 +8,9 @@ import {
   copyFile,
   statSync,
   readFileSync,
+  rmSync,
+  existsSync,
+  mkdirSync,
 } from "fs";
 import { resolve } from "path";
 import sharp from "sharp";
@@ -247,23 +250,48 @@ async function addRoundedCorners(params) {
 // });
 
 async function toIcoImage(params) {
+  // const res = execSync(
+  //   `/Users/liangshan/Downloads/ffmpeg/ffmpeg -i ${params.input} -vf scale=256x256 ${params.output}`
+  // );
+  // console.log(">>>", res.toString());
+
   try {
-    // 生成不同尺寸的PNG Buffer数组
-    const buffers = await Promise.all(
-      [16, 32, 48, 64, 128, 256].map((size) =>
-        sharp(params.input)
-          .resize(size) // 调整尺寸
-          .toFormat("png") // 转换为PNG格式
-          .toBuffer()
-      )
+    // 定义 ICNS 所需的标准尺寸（含 @1x 和 @2x）
+    const sizes = [
+      { name: "icon_16x16", size: 16 },
+      { name: "icon_16x16@2x", size: 32 },
+      { name: "icon_32x32", size: 32 },
+      { name: "icon_32x32@2x", size: 64 },
+      { name: "icon_128x128", size: 128 },
+      { name: "icon_128x128@2x", size: 256 },
+      { name: "icon_256x256", size: 256 },
+      { name: "icon_256x256@2x", size: 512 },
+      { name: "icon_512x512", size: 512 },
+      { name: "icon_512x512@2x", size: 1024 },
+    ];
+
+    // 创建临时 .iconset 文件夹
+    const iconsetDir = "/Users/liangshan/Downloads/图片/temp.iconset";
+    if (!existsSync(iconsetDir)) {
+      mkdirSync(iconsetDir);
+    }
+
+    // 生成多尺寸 PNG
+    await Promise.all(
+      sizes.map(async ({ name, size }) => {
+        await sharp(params.input)
+          .resize(size)
+          .toFile(resolve(iconsetDir, `${name}.png`));
+      })
     );
 
-    // 合并为ICO文件
-    const icoData = await toIco(buffers);
+    // 调用 macOS 原生工具 iconutil 生成 ICNS
+    execSync(`iconutil -c icns -o ${params.output} ${iconsetDir}`);
 
-    // 写入输出文件
-    writeFileSync(params.output, icoData);
-    console.log("ICO文件生成成功！");
+    // 清理临时文件夹
+    rmSync(iconsetDir, { recursive: true, force: true });
+
+    console.log("ICNS 文件生成成功！");
   } catch (error) {
     console.error("转换失败:", error);
   }
@@ -272,7 +300,7 @@ async function toIcoImage(params) {
 // heic, heif, avif, jpeg, jpg, jpe, tile, dz, png, raw, tiff, tif, webp, gif, jp2, jpx, j2k, j2c, jxl
 async function formatImage(params) {
   try {
-    if (params.format === "ico") {
+    if (params.format === "ico" || params.format === "icns") {
       await toIcoImage(params);
       return;
     }
@@ -291,7 +319,7 @@ async function formatImage(params) {
 
 formatImage({
   input: "/Users/liangshan/Downloads/图片/1.jpeg",
-  output: "/Users/liangshan/Downloads/图片/1-cc.ico",
-  format: "ico",
+  output: "/Users/liangshan/Downloads/图片/1-cc.icns",
+  format: "icns",
   quality: 94,
 });
