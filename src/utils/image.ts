@@ -8,9 +8,11 @@ import {
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { resolve } from "path";
+import { basename, resolve as pathResolve } from "path";
 import pngquant from "pngquant-bin";
 import sharp from "sharp";
+import icongen from "icon-gen";
+import { removeBackground } from "@imgly/background-removal-node";
 
 /**
  * 下载图片
@@ -21,7 +23,7 @@ export async function downloadImage(imageUrl: string) {
   const response = await fetch(imageUrl);
   const blob = await response.blob();
 
-  const output = resolve(
+  const output = pathResolve(
     tmpdir(),
     `${imageUrl.split("?")[0].split("/").pop()}.${blob.type.split("/")[1]}`
   );
@@ -250,4 +252,151 @@ export async function clipImageWithRoundedCorners(params: {
   } catch (error) {
     throw error;
   }
+}
+
+function getIcoOrIcnsSizes(params: {
+  format: string;
+  sizes: number[];
+}): number[] {
+  const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+  const icnsSizes = [16, 32, 64, 128, 256, 512, 1024];
+  let sizes: number[] = [];
+  if (params.format === "ico") {
+    params.sizes.forEach((size) => {
+      if (icoSizes.includes(size)) {
+        sizes.push(size);
+      } else {
+        const index = icoSizes.findIndex((s) => s > size);
+        sizes =
+          index === -1 ? [icoSizes[icoSizes.length - 1]] : [icoSizes[index]];
+      }
+    });
+  } else if (params.format === "icns") {
+    params.sizes.forEach((size) => {
+      if (icnsSizes.includes(size)) {
+        sizes.push(size);
+      } else {
+        const index = icnsSizes.findIndex((s) => s > size);
+        sizes =
+          index === -1 ? [icnsSizes[icnsSizes.length - 1]] : [icnsSizes[index]];
+      }
+    });
+  }
+  return Array.from(new Set(sizes));
+}
+
+async function toIcoOrIcnsImage(params: {
+  input: string;
+  output: string;
+  multiple?: boolean;
+  size?: number[];
+}) {
+  return new Promise(async (resolve, reject) => {
+    const [outputFileName, outputFormat] = basename(params.output).split(".");
+    const options: {
+      report: boolean;
+      ico?: {
+        name: string;
+        sizes: number[];
+      };
+      icns?: {
+        name: string;
+        sizes: number[];
+      };
+    } = {
+      report: false,
+    };
+
+    let sizes: number[] = [];
+    if (!params.multiple) {
+      if (params.size) {
+        sizes = Array.isArray(params.size) ? params.size : [params.size];
+      } else {
+        const { width } = await sharp(params.input).metadata();
+        sizes = [width || 1024];
+      }
+    } else {
+      sizes = [];
+    }
+    if (outputFormat === "ico") {
+      options.ico = {
+        name: outputFileName,
+        sizes:
+          sizes.length !== 0
+            ? getIcoOrIcnsSizes({ sizes: sizes, format: "ico" })
+            : [16, 24, 32, 48, 64, 128, 256],
+      };
+    } else if (outputFormat === "icns") {
+      options.icns = {
+        name: outputFileName,
+        sizes:
+          sizes.length !== 0
+            ? getIcoOrIcnsSizes({ sizes: sizes, format: "icns" })
+            : [16, 32, 64, 128, 256, 512, 1024],
+      };
+    }
+
+    await icongen(params.input, pathResolve(params.output, ".."), options)
+      .then((res: any) => {
+        resolve(res);
+      })
+      .catch((err: any) => {
+        reject(err);
+      });
+  });
+}
+
+/**
+ * 格式化图片
+ * @param params 格式化参数
+ * @param {string} params.input 输入图片路径
+ * @param {string} params.output 输出图片路径
+ * @param {string} params.format 输出格式
+ * @param {number} [params.quality] 输出质量
+ * @param {boolean} [params.multiple] 是否多张
+ * @param {number | number[]} [params.size] 输出大小
+ * @returns 格式化后的图片路径
+ */
+export async function convertImageFormat(params: {
+  input: string;
+  output: string;
+  format: string;
+  quality?: number;
+  multiple?: boolean;
+  size?: number[];
+}) {
+  try {
+    if (params.format === "ico" || params.format === "icns") {
+      await toIcoOrIcnsImage(params);
+      return;
+    }
+
+    await sharp(params.input)
+      .toFormat((params.format || "jpeg") as keyof sharp.FormatEnum, {
+        quality: params.quality || 100,
+        compressionLevel: 9,
+        lossless: true,
+      })
+      .toFile(params.output);
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * 移除图片背景
+ * @param params 移除背景参数
+ * @param {string} params.input 输入图片路径
+ * @param {string} params.output 输出图片路径
+ * @returns 移除背景后的图片路径
+ */
+export async function removeImageBackground(params: {
+  input: string;
+  output: string;
+}) {
+  const image = await removeBackground(params.input);
+
+  const buffer = Buffer.from(await image.arrayBuffer());
+
+  writeFileSync(params.output, buffer);
 }

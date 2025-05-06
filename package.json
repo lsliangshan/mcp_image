@@ -13,10 +13,12 @@
     "build"
   ],
   "dependencies": {
+    "@imgly/background-removal-node": "^1.4.5",
     "@modelcontextprotocol/sdk": "^1.7.0",
     "axios": "^1.8.4",
     "dotenv": "^16.4.7",
     "fastmcp": "^1.23.1",
+    "icon-gen": "^5.0.0",
     "nanoid": "^5.1.5",
     "pngquant-bin": "^9.0.0",
     "qiniu": "^7.14.0",

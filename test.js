@@ -1,4 +1,4 @@
-import { execSync, exec } from "child_process";
+import { execSync, exec, spawn } from "child_process";
 import pngquant from "pngquant-bin";
 import os from "os";
 import {
@@ -12,14 +12,19 @@ import {
   existsSync,
   mkdirSync,
 } from "fs";
-import { resolve } from "path";
+import { resolve as pathResolve, basename } from "path";
 import sharp from "sharp";
 import toIco from "to-ico";
+import icongen from "icon-gen";
+import {
+  removeBackground,
+  removeForeground,
+} from "@imgly/background-removal-node";
 
 async function downloadImage(imageUrl) {
   const response = await fetch(imageUrl);
   const blob = await response.blob();
-  const output = resolve(
+  const output = pathResolve(
     os.tmpdir(),
     `${imageUrl.split("?")[0].split("/").pop()}.${blob.type.split("/")[1]}`
   );
@@ -281,7 +286,7 @@ async function toIcoImage(params) {
       sizes.map(async ({ name, size }) => {
         await sharp(params.input)
           .resize(size)
-          .toFile(resolve(iconsetDir, `${name}.png`));
+          .toFile(pathResolve(iconsetDir, `${name}.png`));
       })
     );
 
@@ -297,11 +302,88 @@ async function toIcoImage(params) {
   }
 }
 
+function getSizes(params) {
+  const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+  const icnsSizes = [16, 32, 64, 128, 256, 512, 1024];
+  let sizes = [];
+  if (params.format === "ico") {
+    if (icoSizes.includes(params.size)) {
+      sizes = [params.size];
+    } else {
+      const index = icoSizes.findIndex((size) => size > params.size);
+      sizes =
+        index === -1 ? [icoSizes[icoSizes.length - 1]] : [icoSizes[index]];
+    }
+  } else if (params.format === "icns") {
+    if (icnsSizes.includes(params.size)) {
+      sizes = [params.size];
+    } else {
+      const index = icnsSizes.findIndex((size) => size > params.size);
+      sizes =
+        index === -1 ? [icnsSizes[icnsSizes.length - 1]] : [icnsSizes[index]];
+    }
+  }
+  return sizes;
+}
+
+/**
+ * 生成ico或icns图片
+ * @param {*} params
+ * @param {boolean} params.multiple 是否生成多个尺寸的图片
+ * @param {number} params.size 尺寸
+ */
+async function toIcoOrIcnsImage(params) {
+  return new Promise(async (resolve, reject) => {
+    const [outputFileName, outputFormat] = basename(params.output).split(".");
+    const options = {
+      report: true,
+    };
+
+    let sizes = [];
+    if (!params.multiple) {
+      if (params.size) {
+        sizes = [params.size];
+      } else {
+        const { width, height } = await sharp(params.input).metadata();
+        sizes = [width];
+      }
+    } else {
+      sizes = [];
+    }
+    if (outputFormat === "ico") {
+      options.ico = {
+        name: outputFileName,
+        sizes:
+          sizes.length !== 0
+            ? getSizes({ size: sizes[0], format: "ico" })
+            : [16, 24, 32, 48, 64, 128, 256],
+      };
+    } else if (outputFormat === "icns") {
+      options.icns = {
+        name: outputFileName,
+        sizes:
+          sizes.length !== 0
+            ? getSizes({ size: sizes[0], format: "icns" })
+            : [16, 32, 64, 128, 256, 512, 1024],
+      };
+    }
+
+    await icongen(params.input, pathResolve(params.output, ".."), options)
+      .then((res) => {
+        resolve(res);
+      })
+      .catch((err) => {
+        reject(err);
+      });
+  });
+}
+
 // heic, heif, avif, jpeg, jpg, jpe, tile, dz, png, raw, tiff, tif, webp, gif, jp2, jpx, j2k, j2c, jxl
 async function formatImage(params) {
   try {
     if (params.format === "ico" || params.format === "icns") {
-      await toIcoImage(params);
+      const res = await toIcoOrIcnsImage(params);
+      console.log(">>>", res);
       return;
     }
 
@@ -317,9 +399,38 @@ async function formatImage(params) {
   }
 }
 
-formatImage({
-  input: "/Users/liangshan/Downloads/图片/1.jpeg",
-  output: "/Users/liangshan/Downloads/图片/1-cc.icns",
-  format: "icns",
-  quality: 94,
-});
+// formatImage({
+//   input: "/Users/liangshan/Downloads/图片/1.jpeg",
+//   output: "/Users/liangshan/Downloads/图片/1-cc.ico",
+//   format: "ico",
+//   multiple: true,
+// });
+// console.log(basename("/Users/liangshan/Downloads/图片/1.jpeg"));
+
+async function removeImageBg(params) {
+  const image = await removeBackground(params.input);
+
+  const buffer = Buffer.from(await image.arrayBuffer());
+
+  writeFileSync(params.output, buffer);
+  console.log(">>> 背景移除成功");
+}
+
+// removeImageBg({
+//   input: "/Users/liangshan/Downloads/图片/2.jpeg",
+//   output: "/Users/liangshan/Downloads/图片/2-bg.png",
+// });
+
+async function removeImageFg(params) {
+  const image = await removeForeground(params.input);
+
+  const buffer = Buffer.from(await image.arrayBuffer());
+
+  writeFileSync(params.output, buffer);
+  console.log(">>> 前景移除成功");
+}
+
+// removeImageFg({
+//   input: "/Users/liangshan/Downloads/图片/2.jpeg",
+//   output: "/Users/liangshan/Downloads/图片/2-fg.png",
+// });

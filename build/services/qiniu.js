@@ -1,3 +1,4 @@
+import { unlinkSync } from "fs";
 import qiniu from "qiniu";
 qiniu.conf.ACCESS_KEY = "6aCSaA_wdWLuwjvqw7ozq33AsE69J4GWnZVSXZuF";
 qiniu.conf.SECRET_KEY = "d0y5or3horeFQLZ_vS7XfqLplK6iNOWWQxs7G5j3";
@@ -41,6 +42,9 @@ export function upload(params) {
                 });
             }
             if (respInfo.statusCode == 200) {
+                if (params.deleteSource) {
+                    unlinkSync(params.url);
+                }
                 resolve({
                     code: 200,
                     data: {

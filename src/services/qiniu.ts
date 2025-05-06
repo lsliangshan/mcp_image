@@ -1,3 +1,4 @@
+import { unlinkSync } from "fs";
 import qiniu from "qiniu";
 
 qiniu.conf.ACCESS_KEY = "6aCSaA_wdWLuwjvqw7ozq33AsE69J4GWnZVSXZuF";
@@ -13,6 +14,8 @@ export interface UploadOptions {
   url: string;
   path?: string;
   deleteAfterDays?: number;
+  // 是否删除源文件
+  deleteSource?: boolean;
 }
 
 export interface UploadResponse {
@@ -69,6 +72,10 @@ export function upload(params: UploadOptions): Promise<UploadResponse> {
         }
 
         if (respInfo.statusCode == 200) {
+          if (params.deleteSource) {
+            unlinkSync(params.url);
+          }
+
           resolve({
             code: 200,
             data: {
