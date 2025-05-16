@@ -359,7 +359,6 @@ server.addTool({
         }
         try {
             const convertPs = [];
-            console.log("......... args: ", args);
             allImages.forEach(({ input, output }) => {
                 convertPs.push(convertImageFormat({
                     input,
@@ -381,7 +380,6 @@ server.addTool({
                 }
             });
             const uploadPs = [];
-            console.log("......... allImages: ", allImages);
             allImages.forEach(({ output }) => {
                 uploadPs.push(upload({
                     url: output,
@@ -390,7 +388,6 @@ server.addTool({
                 }));
             });
             const uploadResponses = await Promise.all(uploadPs);
-            console.log("......... uploadResponses: ", uploadResponses);
             uploadResponses.forEach((uploadResponse, index) => {
                 if (uploadResponse.code === 200) {
                     succeedUploads.push({
@@ -407,8 +404,6 @@ server.addTool({
                     });
                 }
             });
-            console.log("......... succeedUploads: ", succeedUploads);
-            console.log("......... failedUploads: ", failedUploads);
             let resText = ``;
             if (succeedUploads.length > 0) {
                 resText = `图片格式转换成功，请查看：\n`;

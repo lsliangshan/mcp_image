@@ -471,7 +471,6 @@ server.addTool({
 
     try {
       const convertPs: Promise<void>[] = [];
-      console.log("......... args: ", args);
 
       allImages.forEach(({ input, output }) => {
         convertPs.push(
@@ -500,8 +499,6 @@ server.addTool({
 
       const uploadPs: Promise<UploadResponse>[] = [];
 
-      console.log("......... allImages: ", allImages);
-
       allImages.forEach(({ output }) => {
         uploadPs.push(
           upload({
@@ -513,8 +510,6 @@ server.addTool({
       });
 
       const uploadResponses = await Promise.all(uploadPs);
-
-      console.log("......... uploadResponses: ", uploadResponses);
 
       uploadResponses.forEach((uploadResponse, index) => {
         if (uploadResponse.code === 200) {
@@ -531,9 +526,6 @@ server.addTool({
           });
         }
       });
-
-      console.log("......... succeedUploads: ", succeedUploads);
-      console.log("......... failedUploads: ", failedUploads);
 
       let resText = ``;
 
