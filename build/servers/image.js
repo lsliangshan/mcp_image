@@ -182,11 +182,12 @@ server.addTool({
         title: "将图片切圆角",
     },
     parameters: z.object({
-        imageUrl: z.string().url().describe("图片的 URL"),
+        // imageUrl: z.string().url().describe("图片的 URL"),
+        imageUrl: z.array(z.string().url()).describe("图片的 URL 列表"),
         radius: z.number().min(0).optional().describe("圆角的大小，单位：px"),
     }),
     execute: async (args) => {
-        if (!args.imageUrl) {
+        if (!args.imageUrl || args.imageUrl.length === 0) {
             return {
                 content: [
                     {
@@ -196,37 +197,74 @@ server.addTool({
                 ],
             };
         }
-        const image = await downloadImage(args.imageUrl);
-        const output = resolve(tmpdir(), `${image.split(".")[0]}-${getRandomId()}.png`);
-        await clipImageWithRoundedCorners({
-            input: image,
-            output,
-            radius: args.radius || 20,
+        const succeedUploads = [];
+        const failedUploads = [];
+        const downloadPs = [];
+        args.imageUrl.forEach((url) => {
+            downloadPs.push(downloadImage(url));
         });
-        if (existsSync(output)) {
-            const uploadResponse = await upload({
+        const images = await Promise.all(downloadPs);
+        const outputs = [];
+        const allImages = [];
+        for (const image of images) {
+            const output = resolve(tmpdir(), `${image.split(".")[0]}-${getRandomId()}.${image.split(".").pop()}`);
+            allImages.push({
+                input: image,
+                output,
+            });
+            outputs.push(output);
+        }
+        const clipPs = [];
+        allImages.forEach(({ input, output }) => {
+            clipPs.push(clipImageWithRoundedCorners({
+                input,
+                output,
+                radius: args.radius || 20,
+            }));
+        });
+        await Promise.all(clipPs);
+        const uploadPs = [];
+        allImages.forEach(({ output }) => {
+            uploadPs.push(upload({
                 url: output,
                 deleteAfterDays: 30,
-            });
-            if (uploadResponse.code === 200 && uploadResponse.data) {
-                return `图片切圆角成功，请查看：${uploadResponse.data.url}`;
+            }));
+        });
+        const uploadResponses = await Promise.all(uploadPs);
+        uploadResponses.forEach((uploadResponse, index) => {
+            if (uploadResponse.code === 200) {
+                succeedUploads.push({
+                    original: allImages[index].input,
+                    input: uploadResponse.data.originalUrl,
+                    output: uploadResponse.data.url,
+                });
             }
             else {
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: uploadResponse.message || `图片切圆角失败，请稍后再试。`,
-                        },
-                    ],
-                };
+                failedUploads.push({
+                    original: allImages[index].input,
+                    input: allImages[index].output,
+                    output: "",
+                });
             }
+        });
+        let resText = ``;
+        if (succeedUploads.length > 0) {
+            resText = `图片切圆角成功，请查看：\n`;
         }
+        else {
+            resText = `图片切圆角失败，请稍后再试。`;
+        }
+        succeedUploads.forEach((item) => {
+            resText += `切圆角后图片地址：${item.output}\n`;
+        });
+        failedUploads.forEach((item) => {
+            resText += `切圆角失败图片地址：${item.input}\n`;
+        });
         return {
             content: [
                 {
                     type: "text",
-                    text: `图片切圆角失败`,
+                    text: resText,
                 },
             ],
         };
