@@ -17,7 +17,8 @@ server.addTool({
     name: "tinyImage",
     description: "压缩图片",
     parameters: z.object({
-        imageUrl: z.string().url().describe("图片的 URL"),
+        // imageUrl: z.string().url().describe("图片的 URL"),
+        imageUrl: z.array(z.string().url()).describe("图片的 URL 列表"),
         quality: z
             .number()
             .min(0)
@@ -26,7 +27,7 @@ server.addTool({
             .describe("图片的质量，0-100"),
     }),
     execute: async (args) => {
-        if (!args.imageUrl) {
+        if (!args.imageUrl || args.imageUrl.length === 0) {
             return {
                 content: [
                     {
@@ -36,57 +37,139 @@ server.addTool({
                 ],
             };
         }
-        const image = await downloadImage(args.imageUrl);
-        const output = resolve(tmpdir(), `${image.split(".")[0]}-${getRandomId()}.${image.split(".").pop()}`);
-        if (image.endsWith(".png")) {
-            await compressPng({
-                input: image,
-                output,
-                quality: args.quality || 65,
-            });
-        }
-        else if (image.endsWith("webp")) {
-            await compressWebp({
-                input: image,
-                output,
-                quality: args.quality || 80,
-            });
-        }
-        else {
-            await compressJpg({
-                input: image,
-                output,
-                quality: args.quality || 60,
-            });
-        }
-        if (existsSync(output)) {
-            const uploadResponse = await upload({
-                url: output,
-                deleteAfterDays: 30,
-            });
-            if (uploadResponse.code === 200 && uploadResponse.data) {
-                const originSize = statSync(image).size;
-                const newSize = statSync(output).size;
-                const saveSize = originSize - newSize;
-                const saveRate = (saveSize / originSize) * 100;
-                return `图片压缩成功，请查看：${uploadResponse.data.url}, 原图大小：${formatBytes(originSize)}，压缩后大小：${formatBytes(newSize)}，压缩比例：${saveRate.toFixed(2)}%`;
+        const succeedUploads = [];
+        const failedUploads = [];
+        const downloadPs = [];
+        args.imageUrl.forEach((url) => {
+            downloadPs.push(downloadImage(url));
+        });
+        const images = await Promise.all(downloadPs);
+        const outputs = [];
+        const allImages = {
+            png: [],
+            webp: [],
+            other: [],
+        };
+        for (const image of images) {
+            const output = resolve(tmpdir(), `${image.split(".")[0]}-${getRandomId()}.${image.split(".").pop()}`);
+            if (image.endsWith(".png")) {
+                allImages.png.push({
+                    input: image,
+                    output,
+                });
+            }
+            else if (image.endsWith(".webp")) {
+                allImages.webp.push({
+                    input: image,
+                    output,
+                });
             }
             else {
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: uploadResponse.message || `图片压缩失败，请稍后再试。`,
-                        },
-                    ],
-                };
+                allImages.other.push({
+                    input: image,
+                    output,
+                });
             }
+            outputs.push(output);
         }
+        const pngCompressPs = [];
+        const webpCompressPs = [];
+        const otherCompressPs = [];
+        allImages.png.forEach(({ input, output }) => {
+            pngCompressPs.push(compressPng({
+                input,
+                output,
+                quality: args.quality || 65,
+            }));
+        });
+        allImages.webp.forEach(({ input, output }) => {
+            webpCompressPs.push(compressWebp({
+                input,
+                output,
+                quality: args.quality || 80,
+            }));
+        });
+        allImages.other.forEach(({ input, output }) => {
+            otherCompressPs.push(compressJpg({
+                input,
+                output,
+                quality: args.quality || 60,
+            }));
+        });
+        const compressPs = [
+            ...pngCompressPs,
+            ...webpCompressPs,
+            ...otherCompressPs,
+        ];
+        try {
+            const p = await Promise.allSettled(compressPs);
+            p.forEach((item, index) => {
+                if (item.status === "rejected") {
+                    failedUploads.push({
+                        original: images[index],
+                        input: outputs[index],
+                        output: "",
+                    });
+                }
+            });
+        }
+        catch (_) { }
+        const flatImages = allImages.png.concat(allImages.webp, allImages.other);
+        const uploadPs = [];
+        flatImages.forEach(({ input, output }) => {
+            if (existsSync(output)) {
+                uploadPs.push(upload({
+                    url: output,
+                    deleteAfterDays: 30,
+                }));
+            }
+            else {
+                const idx = failedUploads.findIndex(({ input: ipt }) => ipt === output);
+                if (idx < 0) {
+                    failedUploads.push({ original: input, input: output, output: "" });
+                }
+            }
+        });
+        const uploadResponses = await Promise.all(uploadPs);
+        uploadResponses.forEach((uploadResponse) => {
+            const originalIdx = flatImages.findIndex(({ output: opt }) => opt === uploadResponse.data.originalUrl);
+            const original = originalIdx > -1 ? flatImages[originalIdx].input : "";
+            if (uploadResponse.code === 200) {
+                succeedUploads.push({
+                    original,
+                    input: uploadResponse.data.originalUrl,
+                    output: uploadResponse.data.url,
+                });
+            }
+            else {
+                const idx = failedUploads.findIndex(({ input }) => input === uploadResponse.data.originalUrl);
+                if (idx < 0) {
+                    failedUploads.push({
+                        original,
+                        input: uploadResponse.data.originalUrl,
+                        output: "",
+                    });
+                }
+            }
+        });
+        let resText = succeedUploads.length > 0
+            ? "图片压缩成功，请查看：\n"
+            : "图片压缩失败，请稍后再试。";
+        succeedUploads.forEach((item) => {
+            const originSize = statSync(item.original).size;
+            const newSize = statSync(item.input).size;
+            const saveSize = originSize - newSize;
+            const saveRate = (saveSize / originSize) * 100;
+            resText += `压缩后图片地址：${item.output}，原图大小：${formatBytes(originSize)}，压缩后大小：${formatBytes(newSize)}，压缩比例：${saveRate.toFixed(2)}%\n`;
+        });
+        failedUploads.forEach((item) => {
+            resText += `压缩失败图片地址：${item.input}\n`;
+        });
         return {
             content: [
                 {
                     type: "text",
-                    text: `图片压缩失败`,
+                    text: resText,
                 },
             ],
         };

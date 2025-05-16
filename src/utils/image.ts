@@ -180,8 +180,6 @@ export async function compressJpg(params: {
   // 获取原始图片元数据
   const metadata = await sharp(params.input).metadata();
 
-  console.log(">>>", metadata);
-
   if (metadata.format === "webp") {
     return compressWebp(params);
   }

@@ -68,6 +68,9 @@ export function upload(params: UploadOptions): Promise<UploadResponse> {
           resolve({
             code: 100,
             message: respErr.message,
+            data: {
+              originalUrl: params.url,
+            },
           });
         }
 
@@ -81,12 +84,16 @@ export function upload(params: UploadOptions): Promise<UploadResponse> {
             data: {
               url:
                 "https://img.liangqy.com/" + respBody.key + "?" + respBody.hash,
+              originalUrl: params.url,
             },
           });
         } else {
           resolve({
             code: respInfo.statusCode,
-            data: respBody,
+            data: {
+              ...respBody,
+              originalUrl: params.url,
+            },
           });
         }
       }

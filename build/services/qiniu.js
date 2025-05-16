@@ -39,6 +39,9 @@ export function upload(params) {
                 resolve({
                     code: 100,
                     message: respErr.message,
+                    data: {
+                        originalUrl: params.url,
+                    },
                 });
             }
             if (respInfo.statusCode == 200) {
@@ -49,13 +52,17 @@ export function upload(params) {
                     code: 200,
                     data: {
                         url: "https://img.liangqy.com/" + respBody.key + "?" + respBody.hash,
+                        originalUrl: params.url,
                     },
                 });
             }
             else {
                 resolve({
                     code: respInfo.statusCode,
-                    data: respBody,
+                    data: {
+                        ...respBody,
+                        originalUrl: params.url,
+                    },
                 });
             }
         });
