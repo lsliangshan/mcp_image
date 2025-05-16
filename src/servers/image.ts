@@ -25,6 +25,9 @@ const server = new FastMCP({
   version: servers[ServerName].version,
 });
 
+const deleteSource = true;
+const deleteAfterDays = 30;
+
 server.addTool({
   name: "tinyImage",
   description: "压缩图片",
@@ -167,7 +170,8 @@ server.addTool({
         uploadPs.push(
           upload({
             url: output,
-            deleteAfterDays: 30,
+            deleteAfterDays,
+            deleteSource,
           })
         );
       } else {
@@ -312,7 +316,8 @@ server.addTool({
       uploadPs.push(
         upload({
           url: output,
-          deleteAfterDays: 30,
+          deleteAfterDays,
+          deleteSource,
         })
       );
     });
@@ -369,7 +374,8 @@ server.addTool({
     title: "将图片 {{image url}} 转换为 ico 格式",
   },
   parameters: z.object({
-    imageUrl: z.string().url().describe("图片的 URL"),
+    // imageUrl: z.string().url().describe("图片的 URL"),
+    imageUrl: z.array(z.string().url()).describe("图片的 URL 列表"),
     format: z
       .enum([
         "ico",
@@ -413,7 +419,7 @@ server.addTool({
       .describe("图片的大小，单位：px，输出格式为ico或icns时有效"),
   }),
   execute: async (args) => {
-    if (!args.imageUrl) {
+    if (!args.imageUrl || args.imageUrl.length === 0) {
       return {
         content: [
           {
@@ -424,21 +430,39 @@ server.addTool({
       };
     }
 
-    // console.log("......", args);
-    // return {
-    //   content: [
-    //     {
-    //       type: "text",
-    //       text: `图片格式转换成功`,
-    //     },
-    //   ],
-    // };
-    const image = await downloadImage(args.imageUrl);
+    const succeedUploads: {
+      original: string;
+      input: string;
+      output: string;
+    }[] = [];
+    const failedUploads: { original: string; input: string; output: string }[] =
+      [];
 
-    const output = resolve(
-      tmpdir(),
-      `${image.split(".")[0]}-${getRandomId()}.${args.format}`
-    );
+    const downloadPs: Promise<string>[] = [];
+
+    args.imageUrl.forEach((url) => {
+      downloadPs.push(downloadImage(url));
+    });
+
+    const images = await Promise.all(downloadPs);
+
+    const outputs: string[] = [];
+
+    const allImages: { input: string; output: string }[] = [];
+
+    for (const image of images) {
+      const output = resolve(
+        tmpdir(),
+        `${image.split(".")[0]}-${getRandomId()}.${args.format}`
+      );
+
+      allImages.push({
+        input: image,
+        output,
+      });
+
+      outputs.push(output);
+    }
 
     let multiple = args.multiple;
     if (args.size && args.size.length > 0) {
@@ -446,41 +470,92 @@ server.addTool({
     }
 
     try {
-      await convertImageFormat({
-        input: image,
-        output,
-        format: args.format || "jpeg",
-        quality: args.quality || 100,
-        multiple,
-        size: args.size,
+      const convertPs: Promise<void>[] = [];
+      console.log("......... args: ", args);
+
+      allImages.forEach(({ input, output }) => {
+        convertPs.push(
+          convertImageFormat({
+            input,
+            output,
+            format: args.format || "jpeg",
+            quality: args.quality || 100,
+            multiple,
+            size: args.size,
+          })
+        );
       });
 
-      if (existsSync(output)) {
-        const uploadResponse = await upload({
-          url: output,
-          deleteAfterDays: 30,
-          deleteSource: true,
-        });
+      const p = await Promise.allSettled(convertPs);
 
-        if (uploadResponse.code === 200 && uploadResponse.data) {
-          return `图片格式转换成功，请查看：${uploadResponse.data.url}`;
-        } else {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  uploadResponse.message || `图片格式转换失败，请稍后再试。`,
-              },
-            ],
-          };
+      p.forEach((item, index) => {
+        if (item.status === "rejected") {
+          failedUploads.push({
+            original: allImages[index].input,
+            input: allImages[index].output,
+            output: "",
+          });
         }
+      });
+
+      const uploadPs: Promise<UploadResponse>[] = [];
+
+      console.log("......... allImages: ", allImages);
+
+      allImages.forEach(({ output }) => {
+        uploadPs.push(
+          upload({
+            url: output,
+            deleteAfterDays,
+            deleteSource,
+          })
+        );
+      });
+
+      const uploadResponses = await Promise.all(uploadPs);
+
+      console.log("......... uploadResponses: ", uploadResponses);
+
+      uploadResponses.forEach((uploadResponse, index) => {
+        if (uploadResponse.code === 200) {
+          succeedUploads.push({
+            original: allImages[index].input,
+            input: uploadResponse.data!.originalUrl,
+            output: uploadResponse.data!.url,
+          });
+        } else {
+          failedUploads.push({
+            original: allImages[index].input,
+            input: allImages[index].output,
+            output: "",
+          });
+        }
+      });
+
+      console.log("......... succeedUploads: ", succeedUploads);
+      console.log("......... failedUploads: ", failedUploads);
+
+      let resText = ``;
+
+      if (succeedUploads.length > 0) {
+        resText = `图片格式转换成功，请查看：\n`;
+      } else {
+        resText = `图片格式转换失败，请稍后再试。`;
       }
+
+      succeedUploads.forEach((item) => {
+        resText += `格式转换后图片地址：${item.output}\n`;
+      });
+
+      failedUploads.forEach((item) => {
+        resText += `格式转换失败图片地址：${item.input}\n`;
+      });
+
       return {
         content: [
           {
             type: "text",
-            text: `图片格式转换失败`,
+            text: resText,
           },
         ],
       };
