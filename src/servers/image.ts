@@ -10,7 +10,7 @@ import {
   downloadImage,
   removeImageBackground,
 } from "../utils/image.js";
-import { existsSync, statSync } from "fs";
+import { existsSync, statSync, unlinkSync } from "fs";
 import { resolve } from "path";
 import { tmpdir } from "os";
 import { getRandomId } from "../utils/random.js";
@@ -171,7 +171,6 @@ server.addTool({
           upload({
             url: output,
             deleteAfterDays,
-            deleteSource,
           })
         );
       } else {
@@ -213,6 +212,7 @@ server.addTool({
       succeedUploads.length > 0
         ? "图片压缩成功，请查看：\n"
         : "图片压缩失败，请稍后再试。";
+
     succeedUploads.forEach((item) => {
       const originSize = statSync(item.original).size;
       const newSize = statSync(item.input).size;
@@ -227,7 +227,14 @@ server.addTool({
     failedUploads.forEach((item) => {
       resText += `压缩失败图片地址：${item.input}\n`;
     });
-
+    [...succeedUploads, ...failedUploads].forEach((item) => {
+      if (existsSync(item.input)) {
+        unlinkSync(item.input);
+      }
+      if (existsSync(item.output)) {
+        unlinkSync(item.output);
+      }
+    });
     return {
       content: [
         {
@@ -571,10 +578,11 @@ server.addTool({
     title: "移除图片 {{image url}} 的背景",
   },
   parameters: z.object({
-    imageUrl: z.string().url().describe("图片的 URL"),
+    // imageUrl: z.string().url().describe("图片的 URL"),
+    imageUrl: z.array(z.string().url()).describe("图片的 URL 列表"),
   }),
   execute: async (args) => {
-    if (!args.imageUrl) {
+    if (!args.imageUrl || args.imageUrl.length === 0) {
       return {
         content: [
           {
@@ -584,42 +592,115 @@ server.addTool({
         ],
       };
     }
-    const image = await downloadImage(args.imageUrl);
 
-    const output = resolve(
-      tmpdir(),
-      `${image.split(".")[0]}-${getRandomId()}.png`
-    );
+    const succeedUploads: {
+      original: string;
+      input: string;
+      output: string;
+    }[] = [];
+    const failedUploads: { original: string; input: string; output: string }[] =
+      [];
 
-    await removeImageBackground({
-      input: image,
-      output,
+    const downloadPs: Promise<string>[] = [];
+
+    args.imageUrl.forEach((url) => {
+      downloadPs.push(downloadImage(url));
     });
 
-    if (existsSync(output)) {
-      const uploadResponse = await upload({
-        url: output,
-        deleteAfterDays: 30,
+    const images = await Promise.all(downloadPs);
+
+    const outputs: string[] = [];
+
+    const allImages: { input: string; output: string }[] = [];
+
+    for (const image of images) {
+      const output = resolve(
+        tmpdir(),
+        `${image.split(".")[0]}-${getRandomId()}.png`
+      );
+
+      allImages.push({
+        input: image,
+        output,
       });
 
-      if (uploadResponse.code === 200 && uploadResponse.data) {
-        return `图片背景移除成功，请查看：${uploadResponse.data.url}`;
-      } else {
-        return {
-          content: [
-            {
-              type: "text",
-              text: uploadResponse.message || `图片背景移除失败，请稍后再试。`,
-            },
-          ],
-        };
-      }
+      outputs.push(output);
     }
+
+    const removePs: Promise<void>[] = [];
+
+    allImages.forEach(({ input, output }) => {
+      removePs.push(
+        removeImageBackground({
+          input,
+          output,
+        })
+      );
+    });
+
+    const p = await Promise.allSettled(removePs);
+
+    p.forEach((item, index) => {
+      if (item.status === "rejected") {
+        failedUploads.push({
+          original: allImages[index].input,
+          input: allImages[index].output,
+          output: "",
+        });
+      }
+    });
+
+    const uploadPs: Promise<UploadResponse>[] = [];
+
+    allImages.forEach(({ output }) => {
+      uploadPs.push(
+        upload({
+          url: output,
+          deleteAfterDays,
+          deleteSource,
+        })
+      );
+    });
+
+    const uploadResponses = await Promise.all(uploadPs);
+
+    uploadResponses.forEach((uploadResponse, index) => {
+      if (uploadResponse.code === 200) {
+        succeedUploads.push({
+          original: allImages[index].input,
+          input: uploadResponse.data!.originalUrl,
+          output: uploadResponse.data!.url,
+        });
+      } else {
+        failedUploads.push({
+          original: allImages[index].input,
+          input: allImages[index].output,
+          output: "",
+        });
+      }
+    });
+
+    let resText = ``;
+
+    if (succeedUploads.length > 0) {
+      resText = `图片背景移除成功，请查看：\n`;
+    } else {
+      resText = `图片背景移除失败，请稍后再试。`;
+    }
+
+    succeedUploads.forEach((item) => {
+      resText += `背景移除后图片地址：${item.output}\n`;
+    });
+
+    failedUploads.forEach((item) => {
+      resText += `背景移除失败图片地址：${item.input}\n`;
+    });
+
     return {
       content: [
         {
           type: "text",
-          text: `图片背景移除失败`,
+          text: resText,
         },
       ],
     };
